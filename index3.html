@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Real-Time HPL Visualization</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body {
+            display: flex;
+            flex-direction: row;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+        }
+        #map {
+            flex: 2;
+            height: 100%;
+        }
+        #data-table {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            border-left: 1px solid #ccc;
+            background-color: #f9f9f9;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="data-table">
+        <h2>Real-Time HPL Data</h2>
+        <table id="hpl-table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
+                    <th>HPL (m)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Rows will be dynamically added here -->
+            </tbody>
+        </table>
+    </div>
+    <script>
+        // Initialize map centered at arbitrary starting point
+        var map = L.map('map').setView([51.505, -0.09], 16);
+
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 17,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Initialize circle with placeholder position and radius
+        var circle = L.circle([51.505, -0.09], { radius: 1 }).addTo(map);
+
+        // Reference to the table body
+        var tableBody = document.querySelector('#hpl-table tbody');
+
+        // Function to fetch HPL and position from Python server
+        async function fetchHPL() {
+            try {
+                let response = await fetch('http://localhost:5000/hpl');
+                if (response.ok) {
+                    let data = await response.json();
+                    console.log("HPL:", data.hpl, "Position:", data.position);
+
+                    // Update circle position and radius
+                    var lat = data.position.lat;
+                    var lon = data.position.lon;
+                    var hplRadius = data.hpl; // HPL in meters
+                    var timestamp = new Date().toLocaleString(); // Simulated timestamp
+
+                    // Update circle with new position and radius
+                    circle.setLatLng([lat, lon]);
+                    circle.setRadius(hplRadius);
+
+                    // Center map on the new position
+                    map.setView([lat, lon], 16);
+
+                    // Add a new row to the table
+                    var row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${timestamp}</td>
+                        <td>${lat.toFixed(6)}</td>
+                        <td>${lon.toFixed(6)}</td>
+                        <td>${hplRadius.toFixed(2)}</td>
+                    `;
+                    tableBody.appendChild(row);
+
+                    // Scroll to the latest row
+                    tableBody.parentElement.scrollTop = tableBody.scrollHeight;
+                } else {
+                    console.error('Error fetching HPL data');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+
+        // Poll for HPL updates every 1 second
+        setInterval(fetchHPL, 1000);
+    </script>
+</body>
+</html>
+
