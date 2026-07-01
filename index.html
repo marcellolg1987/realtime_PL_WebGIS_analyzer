@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GNSS Integrity WebGIS - HPL, HDOP, PDOP</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #64748b;
+      --border: #d7dee9;
+      --blue: #2563eb;
+      --orange: #f97316;
+      --green: #16a34a;
+      --red: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    #map {
+      flex: 1 1 auto;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 440px;
+      max-width: 45vw;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 14px;
+      border-left: 1px solid var(--border);
+      background: var(--bg);
+    }
+    h1 {
+      margin: 0 0 4px 0;
+      font-size: 20px;
+    }
+    .subtitle {
+      margin: 0 0 12px 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fbfdff;
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .metric .value {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .metric .unit {
+      font-size: 13px;
+      color: var(--muted);
+      margin-left: 2px;
+    }
+    .hpl { color: var(--blue); }
+    .hdop { color: var(--orange); }
+    .pdop { color: var(--green); }
+    .small { font-size: 12px; color: var(--muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 7px 6px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    th { background: #f8fafc; color: #334155; position: sticky; top: 0; }
+    tbody tr:hover { background: #f8fafc; }
+    .legend {
+      position: absolute;
+      left: 12px;
+      bottom: 22px;
+      z-index: 1000;
+      background: white;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      line-height: 1.5;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    }
+    .swatch {
+      display: inline-block;
+      width: 18px;
+      height: 4px;
+      margin-right: 6px;
+      vertical-align: middle;
+      border-radius: 2px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid var(--border);
+      background: white;
+      border-radius: 8px;
+      padding: 7px 9px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover { background: #f8fafc; }
+    @media (max-width: 900px) {
+      body { flex-direction: column; }
+      #map { height: 60vh; }
+      #sidebar { width: 100%; max-width: 100%; height: 40vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <aside id="sidebar">
+    <h1>GNSS Integrity Monitor</h1>
+    <p class="subtitle">
+      Historical replay / real-time visualization from Python Flask endpoints.<br>
+      Displays vessel trajectory, HPL circle, HDOP/PDOP/HPL statistics and acquisition table.
+    </p>
+
+    <div class="card">
+      <div class="grid">
+        <div class="metric">
+          <div class="label">Current HPL</div>
+          <div class="value hpl"><span id="current-hpl">--</span><span class="unit">m</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Current satellites</div>
+          <div class="value"><span id="current-sats">--</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Current HDOP</div>
+          <div class="value hdop"><span id="current-hdop">--</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Current PDOP</div>
+          <div class="value pdop"><span id="current-pdop">--</span></div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button onclick="fitTrack()">Fit trajectory</button>
+        <button onclick="toggleCircles()">Toggle HPL circles</button>
+        <button onclick="clearLocalTrack()">Clear local table</button>
+      </div>
+      <p class="small" id="status-text">Waiting for data...</p>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px 0; font-size:15px;">Dataset statistics</h3>
+      <div class="grid">
+        <div class="metric">
+          <div class="label">Processed points</div>
+          <div class="value"><span id="stat-points">0</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">HPL availability</div>
+          <div class="value"><span id="stat-hpl-avail">--</span><span class="unit">%</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Mean HPL</div>
+          <div class="value hpl"><span id="stat-hpl-mean">--</span><span class="unit">m</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Max HPL</div>
+          <div class="value hpl"><span id="stat-hpl-max">--</span><span class="unit">m</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Mean HDOP</div>
+          <div class="value hdop"><span id="stat-hdop-mean">--</span></div>
+        </div>
+        <div class="metric">
+          <div class="label">Mean PDOP</div>
+          <div class="value pdop"><span id="stat-pdop-mean">--</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px 0; font-size:15px;">Latest acquisitions</h3>
+      <table id="hpl-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Lat</th>
+            <th>Lon</th>
+            <th>HPL</th>
+            <th>HDOP</th>
+            <th>PDOP</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </aside>
+
+  <div class="legend">
+    <div><span class="swatch" style="background:#2563eb"></span>Vessel trajectory</div>
+    <div><span class="swatch" style="background:#dc2626"></span>Current HPL circle</div>
+    <div><span class="swatch" style="background:#94a3b8"></span>Historical HPL circles</div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://127.0.0.1:5000';
+    const MAX_TABLE_ROWS = 120;
+    const MAX_HPL_CIRCLES = 180;
+
+    const map = L.map('map').setView([38.19, 15.55], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let marker = null;
+    let currentCircle = null;
+    let polyline = L.polyline([], { weight: 4, opacity: 0.85 }).addTo(map);
+    let hplCircleLayer = L.layerGroup().addTo(map);
+    let hplCirclesVisible = true;
+    let lastRenderedCount = 0;
+    let firstFitDone = false;
+
+    function fmt(value, digits = 2) {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) return '--';
+      return Number(value).toFixed(digits);
+    }
+
+    function shortTime(value) {
+      if (!value) return '--';
+      // Accepts ISO, "HH:MM:SS UTC", or plain timestamps.
+      if (typeof value === 'string' && value.includes('T')) {
+        const d = new Date(value);
+        if (!Number.isNaN(d.getTime())) return d.toISOString().slice(11, 19);
+      }
+      return String(value).replace(' UTC', '').slice(0, 19);
+    }
+
+    function getPointTime(p) {
+      return p.gps_time_utc || p.timestamp || p.processed_utc || p.replay_timestamp || null;
+    }
+
+    function getHDOP(p) {
+      return p.hdop ?? p.HDOP ?? p.h_dop ?? null;
+    }
+
+    function getPDOP(p) {
+      return p.pdop ?? p.PDOP ?? p.p_dop ?? null;
+    }
+
+    function addOrUpdateCurrentPoint(p) {
+      const lat = p.lat ?? (p.position && p.position.lat);
+      const lon = p.lon ?? (p.position && p.position.lon);
+      const hpl = p.hpl;
+      if (lat === null || lat === undefined || lon === null || lon === undefined) return;
+
+      const latlng = [Number(lat), Number(lon)];
+      if (!marker) marker = L.marker(latlng).addTo(map);
+      else marker.setLatLng(latlng);
+
+      if (hpl !== null && hpl !== undefined) {
+        if (!currentCircle) {
+          currentCircle = L.circle(latlng, { radius: Number(hpl), weight: 2, fillOpacity: 0.12 }).addTo(map);
+        } else {
+          currentCircle.setLatLng(latlng).setRadius(Number(hpl));
+        }
+      }
+    }
+
+    function renderTrack(points) {
+      if (!points || points.length === 0) return;
+      if (points.length === lastRenderedCount) return;
+      lastRenderedCount = points.length;
+
+      const latlngs = points
+        .filter(p => p.lat !== null && p.lat !== undefined && p.lon !== null && p.lon !== undefined)
+        .map(p => [Number(p.lat), Number(p.lon)]);
+
+      polyline.setLatLngs(latlngs);
+      hplCircleLayer.clearLayers();
+
+      const step = Math.max(1, Math.floor(points.length / MAX_HPL_CIRCLES));
+      points.forEach((p, i) => {
+        if (i % step !== 0) return;
+        if (p.hpl === null || p.hpl === undefined) return;
+        if (p.lat === null || p.lat === undefined || p.lon === null || p.lon === undefined) return;
+        L.circle([Number(p.lat), Number(p.lon)], {
+          radius: Number(p.hpl),
+          weight: 1,
+          opacity: 0.35,
+          fillOpacity: 0.035
+        }).addTo(hplCircleLayer);
+      });
+
+      if (!hplCirclesVisible) map.removeLayer(hplCircleLayer);
+      if (!firstFitDone && latlngs.length > 2) {
+        map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+        firstFitDone = true;
+      }
+
+      addOrUpdateCurrentPoint(points[points.length - 1]);
+      renderTable(points.slice(-MAX_TABLE_ROWS));
+    }
+
+    function renderTable(points) {
+      const tbody = document.querySelector('#hpl-table tbody');
+      tbody.innerHTML = '';
+      points.slice().reverse().forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${p.seq ?? ''}</td>
+          <td>${shortTime(getPointTime(p))}</td>
+          <td>${fmt(p.lat, 5)}</td>
+          <td>${fmt(p.lon, 5)}</td>
+          <td>${fmt(p.hpl, 2)}</td>
+          <td>${fmt(getHDOP(p), 2)}</td>
+          <td>${fmt(getPDOP(p), 2)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateCurrentStats(p, pointsCount = null) {
+      const hpl = p.hpl;
+      const hdop = getHDOP(p);
+      const pdop = getPDOP(p);
+      const nSats = p.n_sats ?? p.n_sats_used_gga ?? p.n_gps_sats_for_hpl ?? '--';
+
+      document.getElementById('current-hpl').textContent = fmt(hpl, 2);
+      document.getElementById('current-hdop').textContent = fmt(hdop, 2);
+      document.getElementById('current-pdop').textContent = fmt(pdop, 2);
+      document.getElementById('current-sats').textContent = nSats;
+
+      const lat = p.lat ?? (p.position && p.position.lat);
+      const lon = p.lon ?? (p.position && p.position.lon);
+      const t = shortTime(getPointTime(p) || p.latest_gps_time || p.latest_update_utc);
+      document.getElementById('status-text').textContent =
+        `Latest update: ${t} | Position: ${fmt(lat, 6)}, ${fmt(lon, 6)}${pointsCount !== null ? ' | Points: ' + pointsCount : ''}`;
+    }
+
+    function updateQualityStats(q) {
+      if (!q) return;
+      document.getElementById('stat-points').textContent = q.n_points ?? q.points_processed ?? '--';
+      document.getElementById('stat-hpl-avail').textContent = fmt(q.hpl_availability_percent, 1);
+      document.getElementById('stat-hpl-mean').textContent = fmt(q.hpl_mean, 2);
+      document.getElementById('stat-hpl-max').textContent = fmt(q.hpl_max, 2);
+      document.getElementById('stat-hdop-mean').textContent = fmt(q.hdop_mean, 2);
+      document.getElementById('stat-pdop-mean').textContent = fmt(q.pdop_mean, 2);
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+      return await response.json();
+    }
+
+    async function refresh() {
+      try {
+        // Historical replay endpoint: /track returns {processing_done, points:[...]}
+        let points = [];
+        try {
+          const trackData = await fetchJson(`${API_BASE}/track`);
+          points = trackData.points || trackData || [];
+        } catch (trackErr) {
+          // Fallback for old real-time script without /track.
+          const hplData = await fetchJson(`${API_BASE}/hpl`);
+          const p = {
+            seq: lastRenderedCount + 1,
+            lat: hplData.position && hplData.position.lat,
+            lon: hplData.position && hplData.position.lon,
+            hpl: hplData.hpl,
+            n_sats: hplData.n_sats,
+            gps_time_utc: hplData.latest_gps_time || hplData.latest_update_utc
+          };
+          points = polyline.getLatLngs().map((ll, idx) => ({ seq: idx + 1, lat: ll.lat, lon: ll.lng, hpl: null }));
+          if (p.lat !== null && p.lat !== undefined) points.push(p);
+        }
+
+        if (points.length > 0) {
+          renderTrack(points);
+          updateCurrentStats(points[points.length - 1], points.length);
+        }
+
+        try {
+          const q = await fetchJson(`${API_BASE}/quality`);
+          updateQualityStats(q);
+        } catch (qualityErr) {
+          // If /quality does not exist, compute basic stats client-side.
+          const hpls = points.map(p => p.hpl).filter(v => v !== null && v !== undefined && !Number.isNaN(Number(v))).map(Number);
+          const hdops = points.map(getHDOP).filter(v => v !== null && v !== undefined && !Number.isNaN(Number(v))).map(Number);
+          const pdops = points.map(getPDOP).filter(v => v !== null && v !== undefined && !Number.isNaN(Number(v))).map(Number);
+          updateQualityStats({
+            n_points: points.length,
+            hpl_availability_percent: points.length ? 100 * hpls.length / points.length : null,
+            hpl_mean: hpls.length ? hpls.reduce((a,b)=>a+b,0)/hpls.length : null,
+            hpl_max: hpls.length ? Math.max(...hpls) : null,
+            hdop_mean: hdops.length ? hdops.reduce((a,b)=>a+b,0)/hdops.length : null,
+            pdop_mean: pdops.length ? pdops.reduce((a,b)=>a+b,0)/pdops.length : null
+          });
+        }
+      } catch (err) {
+        console.error(err);
+        document.getElementById('status-text').textContent =
+          `Connection error. Check that the Python Flask script is active on ${API_BASE}.`;
+      }
+    }
+
+    function fitTrack() {
+      if (polyline.getLatLngs().length > 1) map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+    }
+
+    function toggleCircles() {
+      if (map.hasLayer(hplCircleLayer)) {
+        map.removeLayer(hplCircleLayer);
+        hplCirclesVisible = false;
+      } else {
+        hplCircleLayer.addTo(map);
+        hplCirclesVisible = true;
+      }
+    }
+
+    function clearLocalTrack() {
+      document.querySelector('#hpl-table tbody').innerHTML = '';
+      lastRenderedCount = 0;
+    }
+
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
+
