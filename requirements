@@ -1,0 +1,5 @@
+Flask
+Flask-Cors
+numpy
+psycopg2-binary
+pyserial
